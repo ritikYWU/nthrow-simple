@@ -35,7 +35,6 @@ class Extractor(SimpleSource):
                     for book in books
                 ]
                 # print(len(table))
-                print(rows)
                 return {
                     "rows": [
                         self.make_a_row(row["uri"], self.mini_uri(r["uri"], keep_fragments=True), r) for r in rows
@@ -47,8 +46,9 @@ class Extractor(SimpleSource):
                     }
                 }
             else:
-                print(res.status, res.url)
-                print('error')
+                self.logger.error('Non-200 HTTP response: %s : %s' % (res.status, url))
+                return self.make_error('HTTP', res.status, url)
 
         except Exception as e:
-            raise e
+            self.logger.exception(e)
+            return self.make_error('Exception', type(e), str(e))

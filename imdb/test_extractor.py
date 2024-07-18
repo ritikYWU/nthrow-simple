@@ -7,6 +7,7 @@ from nthrow.utils import uri_clean, uri_row_count
 
 from imdb.extractor import Extractor
 
+# table name and postgres credentials
 table = 'nthrows'
 creds = {
 	'user': os.environ['DB_USER'],
@@ -17,21 +18,65 @@ creds = {
 }
 
 conn = create_db_connection(**creds)
-create_store(conn, table)	
+create_store(conn, table)	# creates table
+
 
 def test_simple_extractor():
 	l = Extractor(conn, table)
 	
+	# url of your dataset, this effectively becomes id of this dataset
+	# use l.get_list_row() to return this record from database later
 	l.set_list_info('https://www.imdb.com/chart/moviemeter/')
 	
+	# truncate table to remove previous run's rows
 	uri_clean(l.uri, conn, table)
 
+	'''
+		l.settings = {
+			'remote': {
+				# how often to refresh this dataset (in miutes)
+				# you can leave it None but this extractor will only run once (will still run until pagination ends)
+				'refresh_interval': None,
+				
+				# number if remote url accepts a limit parameter
+				'limit': None
+			}
+		}
+	'''
+	
 	async def call():
 		async with l.create_session() as session:
 			l.session = session
-			r = await l.collect_rows(l.get_list_row())
-			print(l.get_list_row())
 			
+			# collect_rows calls fetch_rows on your extractor class and puts the returned rows in postgres table
+			r = await l.collect_rows(l.get_list_row()) 
+			row = l.get_list_row()
+			
+			assert type(row['next_update_at']) == None
+			assert row['next_update_at'] <= utcnow()
+			to = row['state']['pagination']['to']
+			assert row['state']['pagination']['to']
+			assert not row['state']['pagination']['from']
+			
+			row_count = uri_row_count(l.uri, conn, table, partial=False)
+			print(row_count)
+			assert row_count >= 10
+			
+			# if the pagination has next page info, should_run_again() will return true so you can run the extractor again
+			assert l.should_run_again() == True
+			
+			l.session = None #simulate error
+			
+			r = await l.collect_rows(row)
+			row = l.get_list_row()
+			print(row)
+			assert type(row['next_update_at']) == datetime
+			assert row['next_update_at'] <= utcnow()
+			assert row['state']['pagination']['to'] == to
+			assert 'error' in row['state']
+			assert row['state']['error']['primary']['times'] == 1
+			assert uri_row_count(l.uri, conn, table, partial=False) == row_count
+					
 	asyncio.run(call())
 
 
